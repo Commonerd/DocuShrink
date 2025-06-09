@@ -480,6 +480,7 @@
     </footer>
 
     <script>
+      // Import the 'degrees' function from PDF-LIB.
       const { PDFDocument, StandardFonts, rgb, degrees } = PDFLib;
 
       const dropZone = document.getElementById("dropZone");
@@ -590,7 +591,7 @@
               isNaN(start) ||
               isNaN(end) ||
               start < 1 ||
-              end > totalPages ||
+              end > totalPages || // This condition might cause "Invalid page range" error for valid ranges like "1-END" if totalPages is not yet known or is being parsed relative to 0-indexed. Let's adjust for clarity.
               start > end
             ) {
               throw new Error(`Invalid page range: ${part}`);
@@ -667,10 +668,11 @@
           );
         }
 
-        / RotationDegrees 대신 degrees 함수를 사용하여 회전 각도를 지정합니다.
+        // Use the 'degrees' function to specify the rotation angle.
         const rotation = degrees(parseInt(rotationAngle));
 
-        if (isNaN(rotationAngle) || !rotation) { // rotation이 유효한지 확인 (degrees 함수는 유효하지 않은 입력 시 NaN을 반환할 수 있음)
+        if (isNaN(rotationAngle) || !rotation) {
+          // Check if rotation is valid (degrees function might return NaN for invalid input)
           throw new Error("Invalid rotation angle specified.");
         }
 
@@ -890,7 +892,7 @@
               optimizedFilename: optimizedFilename,
             });
           }
-          renderProcessedFiles();
+          renderProcessedFiles(); // Call this function to display processed files
           alert("All PDFs successfully processed!");
           saveSession();
         } catch (error) {
@@ -966,28 +968,150 @@
         }
       });
 
-      // New event listeners for page manipulation
-      extractPagesBtn.addEventListener("click", async () => {
-        if (selectedFiles.length !== 1) {
-          alert("Please select exactly one PDF file for page extraction.");
+      // Function to render processed files in the output section
+      function renderProcessedFiles() {
+        outputFilesDiv.innerHTML = "";
+        if (processedFileBlobs.size === 0) {
+          outputFilesDiv.innerHTML = `<p style="color:#888;">Processed PDFs will appear here.</p>`;
           return;
         }
+
+        processedFileBlobs.forEach((blobInfo, originalFileName) => {
+          // If it's a merged file, it's already rendered by mergeBtn.
+          // This check prevents duplicate rendering of merged files if they are in `processedFileBlobs`.
+          if (blobInfo.optimizedFilename.startsWith("merged_document_")) {
+            return;
+          }
+
+          const fileItem = document.createElement("div");
+          fileItem.className = "file-item";
+          fileItem.innerHTML = `
+                        <div class="file-info">
+                            <span class="name">Processed: ${
+                              blobInfo.optimizedFilename
+                            }</span>
+                            <span class="size">Size: <strong>${(
+                              blobInfo.optimizedBlob.size / 1024
+                            ).toFixed(2)} KB</strong></span>
+                        </div>
+                        <div class="file-actions">
+                            <button class="download-file-btn" data-filename="${
+                              blobInfo.optimizedFilename
+                            }">Download</button>
+                        </div>
+                    `;
+          outputFilesDiv.appendChild(fileItem);
+
+          // Add event listener for the new download button
+          fileItem
+            .querySelector(".download-file-btn")
+            .addEventListener("click", (e) => {
+              const filename = e.target.dataset.filename;
+              // Find the correct blob by its *optimized* filename since that's what's stored now for download
+              const foundBlobInfo = Array.from(
+                processedFileBlobs.values()
+              ).find((info) => info.optimizedFilename === filename);
+              if (foundBlobInfo && foundBlobInfo.optimizedBlob) {
+                const url = URL.createObjectURL(foundBlobInfo.optimizedBlob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = foundBlobInfo.optimizedFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              } else {
+                alert("Processed file not found for download.");
+              }
+            });
+        });
+      }
+
+      clearBtn.addEventListener("click", () => {
+        selectedFiles = [];
+        processedFileBlobs.clear();
+        localStorage.removeItem(LS_KEY);
+        localStorage.removeItem("docuShrinkQuality");
+        qualityRange.value = 80;
+        qualityValueSpan.textContent = 80;
+        extractPagesInput.value = "";
+        deletePagesInput.value = "";
+        rotatePagesInput.value = "";
+        rotationDegreesSelect.value = 90;
+        renderFileList();
+        alert("All files and session data cleared.");
+      });
+
+      extractPagesBtn.addEventListener("click", async () => {
+        if (selectedFiles.length === 0) {
+          alert("Please add a PDF file first to extract pages.");
+          return;
+        }
+        if (selectedFiles.length > 1) {
+          alert("Please select only one PDF file for page extraction.");
+          return;
+        }
+
         const file = selectedFiles[0];
         const pagesToExtract = extractPagesInput.value.trim();
 
         if (!pagesToExtract) {
-          alert("Please enter page numbers or ranges to extract.");
+          alert("Please enter the pages to extract (e.g., 1-3, 5).");
           return;
         }
 
         outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Extracting pages. Please wait...</p>`;
+
         try {
           const extractedBlob = await extractPdfPages(file, pagesToExtract);
           const extractedFilename = `${file.name.replace(
             ".pdf",
-            ""
-          )}_extracted_pages.pdf`;
-          displayProcessedFile(extractedBlob, extractedFilename, file);
+            `_extracted_pages_${pagesToExtract.replace(
+              /[^a-zA-Z0-9-]/g,
+              "_"
+            )}.pdf`
+          )}`;
+
+          const outputItem = document.createElement("div");
+          outputItem.className = "file-item";
+          outputItem.innerHTML = `
+                        <div class="file-info">
+                            <span class="name">Extracted: ${extractedFilename}</span>
+                            <span class="size">Size: <strong>${(
+                              extractedBlob.size / 1024
+                            ).toFixed(2)} KB</strong></span>
+                        </div>
+                        <div class="file-actions">
+                            <button class="download-file-btn" data-filename="${extractedFilename}">Download Extracted PDF</button>
+                        </div>
+                    `;
+          outputFilesDiv.innerHTML = "";
+          outputFilesDiv.appendChild(outputItem);
+
+          // Store the extracted blob for download
+          processedFileBlobs.set(extractedFilename, {
+            optimizedBlob: extractedBlob,
+            optimizedFilename: extractedFilename,
+          });
+
+          // Add event listener for the new download button
+          outputItem
+            .querySelector(".download-file-btn")
+            .addEventListener("click", (e) => {
+              const filename = e.target.dataset.filename;
+              const blobInfo = processedFileBlobs.get(filename);
+              if (blobInfo && blobInfo.optimizedBlob) {
+                const url = URL.createObjectURL(blobInfo.optimizedBlob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = blobInfo.optimizedFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }
+            });
+
           alert("Pages successfully extracted!");
         } catch (error) {
           outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error extracting pages: ${error.message}.</p>`;
@@ -996,26 +1120,72 @@
       });
 
       deletePagesBtn.addEventListener("click", async () => {
-        if (selectedFiles.length !== 1) {
-          alert("Please select exactly one PDF file for page deletion.");
+        if (selectedFiles.length === 0) {
+          alert("Please add a PDF file first to delete pages.");
           return;
         }
+        if (selectedFiles.length > 1) {
+          alert("Please select only one PDF file for page deletion.");
+          return;
+        }
+
         const file = selectedFiles[0];
         const pagesToDelete = deletePagesInput.value.trim();
 
         if (!pagesToDelete) {
-          alert("Please enter page numbers or ranges to delete.");
+          alert("Please enter the pages to delete (e.g., 2, 4-6).");
           return;
         }
 
         outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Deleting pages. Please wait...</p>`;
+
         try {
           const modifiedBlob = await deletePdfPages(file, pagesToDelete);
           const modifiedFilename = `${file.name.replace(
             ".pdf",
-            ""
-          )}_pages_deleted.pdf`;
-          displayProcessedFile(modifiedBlob, modifiedFilename, file);
+            `_pages_deleted.pdf`
+          )}`;
+
+          const outputItem = document.createElement("div");
+          outputItem.className = "file-item";
+          outputItem.innerHTML = `
+                        <div class="file-info">
+                            <span class="name">Modified: ${modifiedFilename}</span>
+                            <span class="size">Size: <strong>${(
+                              modifiedBlob.size / 1024
+                            ).toFixed(2)} KB</strong></span>
+                        </div>
+                        <div class="file-actions">
+                            <button class="download-file-btn" data-filename="${modifiedFilename}">Download Modified PDF</button>
+                        </div>
+                    `;
+          outputFilesDiv.innerHTML = "";
+          outputFilesDiv.appendChild(outputItem);
+
+          // Store the modified blob for download
+          processedFileBlobs.set(modifiedFilename, {
+            optimizedBlob: modifiedBlob,
+            optimizedFilename: modifiedFilename,
+          });
+
+          // Add event listener for the new download button
+          outputItem
+            .querySelector(".download-file-btn")
+            .addEventListener("click", (e) => {
+              const filename = e.target.dataset.filename;
+              const blobInfo = processedFileBlobs.get(filename);
+              if (blobInfo && blobInfo.optimizedBlob) {
+                const url = URL.createObjectURL(blobInfo.optimizedBlob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = blobInfo.optimizedFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }
+            });
+
           alert("Pages successfully deleted!");
         } catch (error) {
           outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error deleting pages: ${error.message}.</p>`;
@@ -1024,20 +1194,26 @@
       });
 
       rotatePagesBtn.addEventListener("click", async () => {
-        if (selectedFiles.length !== 1) {
-          alert("Please select exactly one PDF file for page rotation.");
+        if (selectedFiles.length === 0) {
+          alert("Please add a PDF file first to rotate pages.");
           return;
         }
+        if (selectedFiles.length > 1) {
+          alert("Please select only one PDF file for page rotation.");
+          return;
+        }
+
         const file = selectedFiles[0];
         const pagesToRotate = rotatePagesInput.value.trim();
         const rotationAngle = rotationDegreesSelect.value;
 
         if (!pagesToRotate) {
-          alert("Please enter page numbers or 'ALL' to rotate.");
+          alert("Please enter the pages to rotate (e.g., ALL or 1, 3-5).");
           return;
         }
 
         outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Rotating pages. Please wait...</p>`;
+
         try {
           const rotatedBlob = await rotatePdfPages(
             file,
@@ -1046,9 +1222,49 @@
           );
           const rotatedFilename = `${file.name.replace(
             ".pdf",
-            ""
-          )}_rotated.pdf`;
-          displayProcessedFile(rotatedBlob, rotatedFilename, file);
+            `_rotated_${rotationAngle}.pdf`
+          )}`;
+
+          const outputItem = document.createElement("div");
+          outputItem.className = "file-item";
+          outputItem.innerHTML = `
+                        <div class="file-info">
+                            <span class="name">Rotated: ${rotatedFilename}</span>
+                            <span class="size">Size: <strong>${(
+                              rotatedBlob.size / 1024
+                            ).toFixed(2)} KB</strong></span>
+                        </div>
+                        <div class="file-actions">
+                            <button class="download-file-btn" data-filename="${rotatedFilename}">Download Rotated PDF</button>
+                        </div>
+                    `;
+          outputFilesDiv.innerHTML = "";
+          outputFilesDiv.appendChild(outputItem);
+
+          // Store the rotated blob for download
+          processedFileBlobs.set(rotatedFilename, {
+            optimizedBlob: rotatedBlob,
+            optimizedFilename: rotatedFilename,
+          });
+
+          // Add event listener for the new download button
+          outputItem
+            .querySelector(".download-file-btn")
+            .addEventListener("click", (e) => {
+              const filename = e.target.dataset.filename;
+              const blobInfo = processedFileBlobs.get(filename);
+              if (blobInfo && blobInfo.optimizedBlob) {
+                const url = URL.createObjectURL(blobInfo.optimizedBlob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = blobInfo.optimizedFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }
+            });
+
           alert("Pages successfully rotated!");
         } catch (error) {
           outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error rotating pages: ${error.message}.</p>`;
@@ -1056,144 +1272,8 @@
         }
       });
 
-      function displayProcessedFile(blob, filename, originalFile) {
-        const outputItem = document.createElement("div");
-        outputItem.className = "file-item";
-        outputItem.innerHTML = `
-                    <div class="file-info">
-                        <span class="name">${filename}</span>
-                        <span class="size">
-                            Original: ${(originalFile.size / 1024).toFixed(
-                              2
-                            )} KB <br>
-                            Processed: <strong>${(blob.size / 1024).toFixed(
-                              2
-                            )} KB</strong>
-                        </span>
-                    </div>
-                    <div class="file-actions">
-                        <button class="download-file-btn" data-filename="${filename}">Download</button>
-                    </div>
-                `;
-        // Clear existing output messages if they are just placeholders
-        if (
-          outputFilesDiv.children.length === 1 &&
-          outputFilesDiv.children[0].tagName === "P"
-        ) {
-          outputFilesDiv.innerHTML = "";
-        }
-        outputFilesDiv.appendChild(outputItem);
-
-        processedFileBlobs.set(filename, {
-          originalFile: originalFile, // Keep reference to original file for size comparison
-          optimizedBlob: blob,
-          optimizedFilename: filename,
-        });
-
-        // Attach download event listener for the new file
-        outputItem
-          .querySelector(".download-file-btn")
-          .addEventListener("click", (e) => {
-            const filenameToDownload = e.target.dataset.filename;
-            const blobInfo = processedFileBlobs.get(filenameToDownload);
-            if (blobInfo && blobInfo.optimizedBlob) {
-              const url = URL.createObjectURL(blobInfo.optimizedBlob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = blobInfo.optimizedFilename;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              URL.revokeObjectURL(url);
-            }
-          });
-        saveSession(); // Save session after processing any file manipulation
-      }
-
-      function renderProcessedFiles() {
-        outputFilesDiv.innerHTML = "";
-        if (processedFileBlobs.size === 0) {
-          outputFilesDiv.innerHTML = `<p style="color:#888;">Processed PDFs will appear here.</p>`;
-          return;
-        }
-
-        processedFileBlobs.forEach((blobInfo, processedFileName) => {
-          // Re-rendering includes all processed files, including merged ones, handled by displayProcessedFile
-          if (
-            blobInfo.originalFile ||
-            blobInfo.optimizedFilename.startsWith("merged_document_")
-          ) {
-            const outputItem = document.createElement("div");
-            outputItem.className = blobInfo.optimizedFilename.startsWith(
-              "merged_document_"
-            )
-              ? "file-item merged-output"
-              : "file-item";
-
-            const originalSizeHtml = blobInfo.originalFile
-              ? `Original: ${(blobInfo.originalFile.size / 1024).toFixed(
-                  2
-                )} KB <br>`
-              : "";
-            const reductionHtml =
-              blobInfo.originalFile && blobInfo.originalFile.size > 0
-                ? `(${(
-                    100 -
-                    (blobInfo.optimizedBlob.size / blobInfo.originalFile.size) *
-                      100
-                  ).toFixed(1)}% reduction)`
-                : "";
-
-            outputItem.innerHTML = `
-                  <div class="file-info">
-                      <span class="name">${blobInfo.optimizedFilename}</span>
-                      <span class="size">
-                          ${originalSizeHtml}
-                          Processed: <strong>${(
-                            blobInfo.optimizedBlob.size / 1024
-                          ).toFixed(2)} KB</strong>
-                          ${reductionHtml}
-                      </span>
-                  </div>
-                  <div class="file-actions">
-                      <button class="download-file-btn" data-filename="${processedFileName}">Download</button>
-                  </div>
-              `;
-            outputFilesDiv.appendChild(outputItem);
-          }
-        });
-
-        document.querySelectorAll(".download-file-btn").forEach((button) => {
-          button.addEventListener("click", (e) => {
-            const filename = e.target.dataset.filename;
-            const blobInfo = processedFileBlobs.get(filename);
-            if (blobInfo && blobInfo.optimizedBlob) {
-              const url = URL.createObjectURL(blobInfo.optimizedBlob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = blobInfo.optimizedFilename;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              URL.revokeObjectURL(url);
-            }
-          });
-        });
-      }
-
-      clearBtn.addEventListener("click", () => {
-        selectedFiles = [];
-        processedFileBlobs.clear();
-        renderFileList();
-        outputFilesDiv.innerHTML = `<p style="color:#888;">Processed PDFs will appear here.</p>`;
-        alert("All PDFs and results cleared.");
-        localStorage.removeItem(LS_KEY);
-      });
-
-      window.addEventListener("load", () => {
-        loadSession();
-        renderFileList();
-      });
+      // Initial load
+      loadSession();
     </script>
   </body>
 </html>
