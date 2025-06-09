@@ -136,7 +136,8 @@
       }
 
       select,
-      input[type="range"] {
+      input[type="range"],
+      input[type="text"] {
         width: 100%;
         padding: 10px;
         border: 1px solid var(--border-color);
@@ -372,8 +373,8 @@
         ><span style="color: var(--secondary-color)">Shrink</span>
       </h1>
       <p>
-        Instantly compress and merge your PDF files. Fast, free, and secure –
-        all in your browser!
+        Instantly compress, merge, extract, delete pages, and rotate your PDF
+        files. Fast, free, and secure – all in your browser!
       </p>
 
       <div class="drop-zone" id="dropZone">
@@ -398,10 +399,59 @@
           <input type="checkbox" id="mergeMode" /> (Drag & drop files below to
           reorder for merging)
         </div>
+
+        <div class="control-group">
+          <label for="extractPagesInput">Extract Pages (e.g., 1-3, 5):</label>
+          <input
+            type="text"
+            id="extractPagesInput"
+            placeholder="e.g., 1-3, 5, 7-END"
+          />
+          <button
+            id="extractPagesBtn"
+            style="margin-top: 10px; min-width: unset; padding: 10px 15px"
+          >
+            Extract Pages
+          </button>
+        </div>
+
+        <div class="control-group">
+          <label for="deletePagesInput">Delete Pages (e.g., 2, 4-6):</label>
+          <input type="text" id="deletePagesInput" placeholder="e.g., 2, 4-6" />
+          <button
+            id="deletePagesBtn"
+            style="margin-top: 10px; min-width: unset; padding: 10px 15px"
+          >
+            Delete Pages
+          </button>
+        </div>
+
+        <div class="control-group">
+          <label for="rotatePagesInput">Rotate Pages (e.g., 1, 3-5):</label>
+          <input
+            type="text"
+            id="rotatePagesInput"
+            placeholder="e.g., ALL or 1, 3-5"
+          />
+          <label for="rotationDegrees" style="margin-top: 10px"
+            >Rotation:</label
+          >
+          <select id="rotationDegrees">
+            <option value="90">90° Clockwise</option>
+            <option value="180">180°</option>
+            <option value="270">270° Clockwise</option>
+          </select>
+          <button
+            id="rotatePagesBtn"
+            style="margin-top: 10px; min-width: unset; padding: 10px 15px"
+          >
+            Rotate Pages
+          </button>
+        </div>
       </div>
 
       <div class="button-group">
-        <button id="processBtn">Process PDFs</button>
+        <button id="processBtn">Process PDFs (Compress)</button>
         <button id="clearBtn" class="clear-button">Clear All</button>
       </div>
 
@@ -430,6 +480,8 @@
     </footer>
 
     <script>
+      const { PDFDocument, StandardFonts, rgb, RotationDegrees } = PDFLib;
+
       const dropZone = document.getElementById("dropZone");
       const pdfInput = document.getElementById("pdfInput");
       const fileListDiv = document.getElementById("fileList");
@@ -443,18 +495,20 @@
       const mergeSortable = document.getElementById("mergeSortable");
       const mergeBtn = document.getElementById("mergeBtn");
 
+      // New elements for page manipulation
+      const extractPagesInput = document.getElementById("extractPagesInput");
+      const extractPagesBtn = document.getElementById("extractPagesBtn");
+      const deletePagesInput = document.getElementById("deletePagesInput");
+      const deletePagesBtn = document.getElementById("deletePagesBtn");
+      const rotatePagesInput = document.getElementById("rotatePagesInput");
+      const rotationDegreesSelect = document.getElementById("rotationDegrees");
+      const rotatePagesBtn = document.getElementById("rotatePagesBtn");
+
       let selectedFiles = []; // Stores actual File objects
       let processedFileBlobs = new Map(); // Stores { fileName: { originalFile: File, optimizedBlob: Blob } }
       let currentDragItem = null; // For drag and drop sorting
 
       // --- Local Storage based persistence for selected/processed files ---
-      // Note: Storing actual Blobs/Files in localStorage is not directly possible
-      // We'll store metadata (name, original size, optimized size) and re-process if needed,
-      // or more practically, use IndexedDB for larger blob storage.
-      // For this example, let's focus on retaining the *list* of files and their statuses.
-      // A full-fledged "continue session" would involve IndexedDB to store the PDF Blobs themselves.
-      // Here, "sticky" means the *display* of files and their processed status is preserved.
-
       const LS_KEY = "docuShrinkSession";
 
       function saveSession() {
@@ -471,10 +525,6 @@
       function loadSession() {
         const savedData = JSON.parse(localStorage.getItem(LS_KEY));
         if (savedData) {
-          // For security and practicality, we don't restore actual files from localStorage.
-          // We just display the names, letting users know what they had.
-          // For true "resume work", one would need IndexedDB to store the actual PDF binary data.
-          // For this project, we'll indicate "processed" status.
           selectedFiles = savedData.map((data) => {
             const mockFile = new File([], data.name, {
               type: data.type,
@@ -484,13 +534,8 @@
             return mockFile;
           });
           renderFileList();
-          // If a file was processed, display a placeholder for its output,
-          // but re-processing would be required to get the actual downloadable blob.
-          // This is a simplification due to browser security models.
-          // For a truly "sticky" experience with files, IndexedDB would be the way.
         }
 
-        // Load quality setting
         const savedQuality = localStorage.getItem("docuShrinkQuality");
         if (savedQuality) {
           qualityRange.value = savedQuality;
@@ -500,29 +545,25 @@
 
       qualityRange.addEventListener("input", () => {
         qualityValueSpan.textContent = qualityRange.value;
-        localStorage.setItem("docuShrinkQuality", qualityRange.value); // Save quality setting
+        localStorage.setItem("docuShrinkQuality", qualityRange.value);
       });
 
-      // --- PDF Processing (Compression & Merging) Logic ---
+      // --- PDF Processing (Compression, Merging, Extraction, Deletion, Rotation) Logic ---
 
       async function compressPdf(file, quality) {
         const arrayBuffer = await file.arrayBuffer();
-        const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer, {
+        const pdfDoc = await PDFDocument.load(arrayBuffer, {
           ignoreEncryption: true,
         });
-
-        // Apply compression based on quality (simple strategy: remove unnecessary objects, linearize)
-        // PDF-LIB's `save` method handles compression. Lower quality means more aggressive compression.
-        const compressedPdfBytes = await pdfDoc.save(); // FIXED: Removed invalid option
-
+        const compressedPdfBytes = await pdfDoc.save();
         return new Blob([compressedPdfBytes], { type: "application/pdf" });
       }
 
       async function mergePdfs(pdfFiles) {
-        const mergedPdf = await PDFLib.PDFDocument.create();
+        const mergedPdf = await PDFDocument.create();
         for (const file of pdfFiles) {
           const arrayBuffer = await file.arrayBuffer();
-          const pdf = await PDFLib.PDFDocument.load(arrayBuffer, {
+          const pdf = await PDFDocument.load(arrayBuffer, {
             ignoreEncryption: true,
           });
           const copiedPages = await mergedPdf.copyPages(
@@ -533,6 +574,118 @@
         }
         const mergedPdfBytes = await mergedPdf.save();
         return new Blob([mergedPdfBytes], { type: "application/pdf" });
+      }
+
+      function parsePageRanges(rangeString, totalPages) {
+        const pages = new Set();
+        const parts = rangeString.split(",").map((s) => s.trim());
+
+        for (const part of parts) {
+          if (part.includes("-")) {
+            let [start, end] = part.split("-").map((s) => s.trim());
+            start = parseInt(start);
+            end = end.toLowerCase() === "end" ? totalPages : parseInt(end);
+
+            if (
+              isNaN(start) ||
+              isNaN(end) ||
+              start < 1 ||
+              end > totalPages ||
+              start > end
+            ) {
+              throw new Error(`Invalid page range: ${part}`);
+            }
+            for (let i = start; i <= end; i++) {
+              pages.add(i - 1); // PDF-LIB is 0-indexed
+            }
+          } else {
+            const pageNum = parseInt(part);
+            if (isNaN(pageNum) || pageNum < 1 || pageNum > totalPages) {
+              throw new Error(`Invalid page number: ${part}`);
+            }
+            pages.add(pageNum - 1); // PDF-LIB is 0-indexed
+          }
+        }
+        return Array.from(pages).sort((a, b) => a - b);
+      }
+
+      async function extractPdfPages(file, pagesToExtract) {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await PDFDocument.load(arrayBuffer, {
+          ignoreEncryption: true,
+        });
+        const newPdfDoc = await PDFDocument.create();
+
+        const pageIndices = parsePageRanges(
+          pagesToExtract,
+          pdfDoc.getPageCount()
+        );
+        if (pageIndices.length === 0) {
+          throw new Error("No valid pages specified for extraction.");
+        }
+
+        const copiedPages = await newPdfDoc.copyPages(pdfDoc, pageIndices);
+        copiedPages.forEach((page) => newPdfDoc.addPage(page));
+
+        const extractedPdfBytes = await newPdfDoc.save();
+        return new Blob([extractedPdfBytes], { type: "application/pdf" });
+      }
+
+      async function deletePdfPages(file, pagesToDelete) {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await PDFDocument.load(arrayBuffer, {
+          ignoreEncryption: true,
+        });
+
+        const pagesToRemoveIndices = parsePageRanges(
+          pagesToDelete,
+          pdfDoc.getPageCount()
+        );
+
+        // Remove pages in reverse order to avoid issues with shifting indices
+        for (let i = pagesToRemoveIndices.length - 1; i >= 0; i--) {
+          pdfDoc.removePage(pagesToRemoveIndices[i]);
+        }
+
+        const modifiedPdfBytes = await pdfDoc.save();
+        return new Blob([modifiedPdfBytes], { type: "application/pdf" });
+      }
+
+      async function rotatePdfPages(file, pagesToRotate, rotationAngle) {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await PDFDocument.load(arrayBuffer, {
+          ignoreEncryption: true,
+        });
+
+        let pageIndicesToRotate;
+        if (pagesToRotate.toLowerCase() === "all") {
+          pageIndicesToRotate = pdfDoc.getPageIndices();
+        } else {
+          pageIndicesToRotate = parsePageRanges(
+            pagesToRotate,
+            pdfDoc.getPageCount()
+          );
+        }
+
+        const rotationMap = {
+          90: RotationDegrees.Ninety,
+          180: RotationDegrees.OneHundredEighty,
+          270: RotationDegrees.TwoHundredSeventy,
+        };
+        const rotation = rotationMap[rotationAngle];
+
+        if (!rotation) {
+          throw new Error("Invalid rotation angle specified.");
+        }
+
+        for (const index of pageIndicesToRotate) {
+          const page = pdfDoc.getPages()[index];
+          // Set new rotation, or add to existing if you want cumulative rotation
+          page.setRotation(rotation);
+        }
+
+        const rotatedPdfBytes = await pdfDoc.save();
+        return new Blob([rotatedPdfBytes], { type: "application/pdf" });
       }
 
       // --- UI Updates & Event Handlers ---
@@ -588,7 +741,7 @@
         selectedFiles.forEach((file, index) => {
           const fileItem = document.createElement("div");
           fileItem.className = "file-item";
-          fileItem.dataset.index = index; // Store original index for removal
+          fileItem.dataset.index = index;
           fileItem.dataset.filename = file.name;
 
           const processedStatus = processedFileBlobs.has(file.name)
@@ -605,23 +758,22 @@
             : "";
 
           fileItem.innerHTML = `
-                    <div class="file-info">
-                        <span class="name">${file.name}</span>
-                        <span class="size">Original: ${(
-                          file.size / 1024
-                        ).toFixed(2)} KB ${optimizedSizeInfo}</span>
-                        <span class="status">${processedStatus}</span>
-                    </div>
-                    <div class="file-actions">
-                        ${downloadButton}
-                        <button data-filename="${
-                          file.name
-                        }" class="remove-file-btn">Remove</button>
-                    </div>
+                        <div class="file-info">
+                            <span class="name">${file.name}</span>
+                            <span class="size">Original: ${(
+                              file.size / 1024
+                            ).toFixed(2)} KB ${optimizedSizeInfo}</span>
+                            <span class="status">${processedStatus}</span>
+                        </div>
+                        <div class="file-actions">
+                            ${downloadButton}
+                            <button data-filename="${
+                              file.name
+                            }" class="remove-file-btn">Remove</button>
+                        </div>
                 `;
           fileListDiv.appendChild(fileItem);
 
-          // Add to merge sortable if merge mode is on
           if (mergeModeCheckbox.checked) {
             const mergeItem = document.createElement("div");
             mergeItem.className = "merge-item";
@@ -638,7 +790,7 @@
             selectedFiles = selectedFiles.filter(
               (file) => file.name !== filenameToRemove
             );
-            processedFileBlobs.delete(filenameToRemove); // Also remove from processed cache
+            processedFileBlobs.delete(filenameToRemove);
             renderFileList();
             saveSession();
           });
@@ -656,7 +808,7 @@
               document.body.appendChild(a);
               a.click();
               document.body.removeChild(a);
-              URL.revokeObjectURL(url); // Clean up
+              URL.revokeObjectURL(url);
             } else {
               alert("File not yet processed or not found for download.");
             }
@@ -704,22 +856,20 @@
           item.addEventListener("dragend", () => {
             currentDragItem.classList.remove("dragging");
             currentDragItem = null;
-            mergeItems.forEach((i) => (i.style.borderTop = "")); // Clear all borders
+            mergeItems.forEach((i) => (i.style.borderTop = ""));
           });
         });
       }
 
-      // Toggle merge section visibility
       mergeModeCheckbox.addEventListener("change", () => {
         if (mergeModeCheckbox.checked) {
           mergeSection.style.display = "block";
         } else {
           mergeSection.style.display = "none";
         }
-        renderFileList(); // Re-render to show/hide merge items
+        renderFileList();
       });
 
-      // Process PDFs
       processBtn.addEventListener("click", async () => {
         if (selectedFiles.length === 0) {
           alert("Please add PDF files first.");
@@ -727,7 +877,7 @@
         }
 
         outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Processing PDFs. Please wait...</p>`;
-        processedFileBlobs.clear(); // Clear previous processed results
+        processedFileBlobs.clear();
 
         const quality = parseFloat(qualityRange.value);
 
@@ -746,21 +896,20 @@
           }
           renderProcessedFiles();
           alert("All PDFs successfully processed!");
-          saveSession(); // Save session after processing
+          saveSession();
         } catch (error) {
           outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error processing PDFs: ${error.message}. Please try again or check file integrity.</p>`;
           console.error("PDF processing error:", error);
         }
       });
 
-      // Merge PDFs
       mergeBtn.addEventListener("click", async () => {
         const filesToMerge = Array.from(mergeSortable.children)
           .map((item) => {
             const filename = item.dataset.filename;
             return selectedFiles.find((file) => file.name === filename);
           })
-          .filter(Boolean); // Filter out null/undefined if any
+          .filter(Boolean);
 
         if (filesToMerge.length < 2) {
           alert(
@@ -776,28 +925,26 @@
           const mergedFilename = `merged_document_${Date.now()}.pdf`;
 
           const outputItem = document.createElement("div");
-          outputItem.className = "file-item merged-output"; // Special class for merged output
+          outputItem.className = "file-item merged-output";
           outputItem.innerHTML = `
-                    <div class="file-info">
-                        <span class="name">Combined PDF: ${mergedFilename}</span>
-                        <span class="size">Size: <strong>${(
-                          mergedBlob.size / 1024
-                        ).toFixed(2)} KB</strong></span>
-                    </div>
-                    <div class="file-actions">
-                        <button class="download-file-btn" data-filename="${mergedFilename}" data-is-merged="true">Download Combined PDF</button>
-                    </div>
+                        <div class="file-info">
+                            <span class="name">Combined PDF: ${mergedFilename}</span>
+                            <span class="size">Size: <strong>${(
+                              mergedBlob.size / 1024
+                            ).toFixed(2)} KB</strong></span>
+                        </div>
+                        <div class="file-actions">
+                            <button class="download-file-btn" data-filename="${mergedFilename}" data-is-merged="true">Download Combined PDF</button>
+                        </div>
                 `;
-          outputFilesDiv.innerHTML = ""; // Clear previous message
+          outputFilesDiv.innerHTML = "";
           outputFilesDiv.appendChild(outputItem);
 
-          // Store merged blob in processedFileBlobs with a unique key
           processedFileBlobs.set(mergedFilename, {
             optimizedBlob: mergedBlob,
             optimizedFilename: mergedFilename,
           });
 
-          // Attach download event listener for the new merged file
           document
             .querySelector('.download-file-btn[data-is-merged="true"]')
             .addEventListener("click", (e) => {
@@ -823,52 +970,203 @@
         }
       });
 
+      // New event listeners for page manipulation
+      extractPagesBtn.addEventListener("click", async () => {
+        if (selectedFiles.length !== 1) {
+          alert("Please select exactly one PDF file for page extraction.");
+          return;
+        }
+        const file = selectedFiles[0];
+        const pagesToExtract = extractPagesInput.value.trim();
+
+        if (!pagesToExtract) {
+          alert("Please enter page numbers or ranges to extract.");
+          return;
+        }
+
+        outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Extracting pages. Please wait...</p>`;
+        try {
+          const extractedBlob = await extractPdfPages(file, pagesToExtract);
+          const extractedFilename = `${file.name.replace(
+            ".pdf",
+            ""
+          )}_extracted_pages.pdf`;
+          displayProcessedFile(extractedBlob, extractedFilename, file);
+          alert("Pages successfully extracted!");
+        } catch (error) {
+          outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error extracting pages: ${error.message}.</p>`;
+          console.error("PDF extraction error:", error);
+        }
+      });
+
+      deletePagesBtn.addEventListener("click", async () => {
+        if (selectedFiles.length !== 1) {
+          alert("Please select exactly one PDF file for page deletion.");
+          return;
+        }
+        const file = selectedFiles[0];
+        const pagesToDelete = deletePagesInput.value.trim();
+
+        if (!pagesToDelete) {
+          alert("Please enter page numbers or ranges to delete.");
+          return;
+        }
+
+        outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Deleting pages. Please wait...</p>`;
+        try {
+          const modifiedBlob = await deletePdfPages(file, pagesToDelete);
+          const modifiedFilename = `${file.name.replace(
+            ".pdf",
+            ""
+          )}_pages_deleted.pdf`;
+          displayProcessedFile(modifiedBlob, modifiedFilename, file);
+          alert("Pages successfully deleted!");
+        } catch (error) {
+          outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error deleting pages: ${error.message}.</p>`;
+          console.error("PDF deletion error:", error);
+        }
+      });
+
+      rotatePagesBtn.addEventListener("click", async () => {
+        if (selectedFiles.length !== 1) {
+          alert("Please select exactly one PDF file for page rotation.");
+          return;
+        }
+        const file = selectedFiles[0];
+        const pagesToRotate = rotatePagesInput.value.trim();
+        const rotationAngle = rotationDegreesSelect.value;
+
+        if (!pagesToRotate) {
+          alert("Please enter page numbers or 'ALL' to rotate.");
+          return;
+        }
+
+        outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Rotating pages. Please wait...</p>`;
+        try {
+          const rotatedBlob = await rotatePdfPages(
+            file,
+            pagesToRotate,
+            rotationAngle
+          );
+          const rotatedFilename = `${file.name.replace(
+            ".pdf",
+            ""
+          )}_rotated.pdf`;
+          displayProcessedFile(rotatedBlob, rotatedFilename, file);
+          alert("Pages successfully rotated!");
+        } catch (error) {
+          outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error rotating pages: ${error.message}.</p>`;
+          console.error("PDF rotation error:", error);
+        }
+      });
+
+      function displayProcessedFile(blob, filename, originalFile) {
+        const outputItem = document.createElement("div");
+        outputItem.className = "file-item";
+        outputItem.innerHTML = `
+                    <div class="file-info">
+                        <span class="name">${filename}</span>
+                        <span class="size">
+                            Original: ${(originalFile.size / 1024).toFixed(
+                              2
+                            )} KB <br>
+                            Processed: <strong>${(blob.size / 1024).toFixed(
+                              2
+                            )} KB</strong>
+                        </span>
+                    </div>
+                    <div class="file-actions">
+                        <button class="download-file-btn" data-filename="${filename}">Download</button>
+                    </div>
+                `;
+        // Clear existing output messages if they are just placeholders
+        if (
+          outputFilesDiv.children.length === 1 &&
+          outputFilesDiv.children[0].tagName === "P"
+        ) {
+          outputFilesDiv.innerHTML = "";
+        }
+        outputFilesDiv.appendChild(outputItem);
+
+        processedFileBlobs.set(filename, {
+          originalFile: originalFile, // Keep reference to original file for size comparison
+          optimizedBlob: blob,
+          optimizedFilename: filename,
+        });
+
+        // Attach download event listener for the new file
+        outputItem
+          .querySelector(".download-file-btn")
+          .addEventListener("click", (e) => {
+            const filenameToDownload = e.target.dataset.filename;
+            const blobInfo = processedFileBlobs.get(filenameToDownload);
+            if (blobInfo && blobInfo.optimizedBlob) {
+              const url = URL.createObjectURL(blobInfo.optimizedBlob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = blobInfo.optimizedFilename;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            }
+          });
+        saveSession(); // Save session after processing any file manipulation
+      }
+
       function renderProcessedFiles() {
-        outputFilesDiv.innerHTML = ""; // Clear previous outputs
+        outputFilesDiv.innerHTML = "";
         if (processedFileBlobs.size === 0) {
           outputFilesDiv.innerHTML = `<p style="color:#888;">Processed PDFs will appear here.</p>`;
           return;
         }
 
-        processedFileBlobs.forEach((blobInfo, originalFileName) => {
-          // Only show individually processed files, merged output has its own display
-          if (blobInfo.originalFile) {
-            // Check if it's an individually processed file
+        processedFileBlobs.forEach((blobInfo, processedFileName) => {
+          // Re-rendering includes all processed files, including merged ones, handled by displayProcessedFile
+          if (
+            blobInfo.originalFile ||
+            blobInfo.optimizedFilename.startsWith("merged_document_")
+          ) {
             const outputItem = document.createElement("div");
-            outputItem.className = "file-item";
-            const optimizedBlobUrl = URL.createObjectURL(
-              blobInfo.optimizedBlob
-            );
+            outputItem.className = blobInfo.optimizedFilename.startsWith(
+              "merged_document_"
+            )
+              ? "file-item merged-output"
+              : "file-item";
+
+            const originalSizeHtml = blobInfo.originalFile
+              ? `Original: ${(blobInfo.originalFile.size / 1024).toFixed(
+                  2
+                )} KB <br>`
+              : "";
+            const reductionHtml =
+              blobInfo.originalFile && blobInfo.originalFile.size > 0
+                ? `(${(
+                    100 -
+                    (blobInfo.optimizedBlob.size / blobInfo.originalFile.size) *
+                      100
+                  ).toFixed(1)}% reduction)`
+                : "";
 
             outputItem.innerHTML = `
-                        <div class="file-info">
-                            <span class="name">${
-                              blobInfo.optimizedFilename
-                            }</span>
-                            <span class="size">
-                                Original: ${(
-                                  blobInfo.originalFile.size / 1024
-                                ).toFixed(2)} KB <br>
-                                Optimized: <strong>${(
-                                  blobInfo.optimizedBlob.size / 1024
-                                ).toFixed(2)} KB</strong>
-                                (${(
-                                  100 -
-                                  (blobInfo.optimizedBlob.size /
-                                    blobInfo.originalFile.size) *
-                                    100
-                                ).toFixed(1)}% reduction)
-                            </span>
-                        </div>
-                        <div class="file-actions">
-                            <button class="download-file-btn" data-filename="${originalFileName}">Download</button>
-                        </div>
-                    `;
+                  <div class="file-info">
+                      <span class="name">${blobInfo.optimizedFilename}</span>
+                      <span class="size">
+                          ${originalSizeHtml}
+                          Processed: <strong>${(
+                            blobInfo.optimizedBlob.size / 1024
+                          ).toFixed(2)} KB</strong>
+                          ${reductionHtml}
+                      </span>
+                  </div>
+                  <div class="file-actions">
+                      <button class="download-file-btn" data-filename="${processedFileName}">Download</button>
+                  </div>
+              `;
             outputFilesDiv.appendChild(outputItem);
           }
         });
 
-        // Re-attach download event listeners for all newly rendered buttons
         document.querySelectorAll(".download-file-btn").forEach((button) => {
           button.addEventListener("click", (e) => {
             const filename = e.target.dataset.filename;
@@ -887,20 +1185,18 @@
         });
       }
 
-      // Clear All
       clearBtn.addEventListener("click", () => {
         selectedFiles = [];
         processedFileBlobs.clear();
         renderFileList();
         outputFilesDiv.innerHTML = `<p style="color:#888;">Processed PDFs will appear here.</p>`;
         alert("All PDFs and results cleared.");
-        localStorage.removeItem(LS_KEY); // Clear session from local storage
+        localStorage.removeItem(LS_KEY);
       });
 
-      // Initial load
       window.addEventListener("load", () => {
-        loadSession(); // Load saved files and settings
-        renderFileList(); // Display them
+        loadSession();
+        renderFileList();
       });
     </script>
   </body>
