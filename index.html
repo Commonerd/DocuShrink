@@ -426,18 +426,18 @@
     </footer>
 
     <script>
-      const dropZone = document.getElementById('dropZone');
-      const pdfInput = document.getElementById('pdfInput');
-      const fileListDiv = document.getElementById('fileList');
-      const qualityRange = document.getElementById('quality');
-      const qualityValueSpan = document.getElementById('qualityValue');
-      const mergeModeCheckbox = document.getElementById('mergeMode');
-      const processBtn = document.getElementById('processBtn');
-      const clearBtn = document.getElementById('clearBtn');
-      const outputFilesDiv = document.getElementById('outputFiles');
-      const mergeSection = document.getElementById('mergeSection');
-      const mergeSortable = document.getElementById('mergeSortable');
-      const mergeBtn = document.getElementById('mergeBtn');
+      const dropZone = document.getElementById("dropZone");
+      const pdfInput = document.getElementById("pdfInput");
+      const fileListDiv = document.getElementById("fileList");
+      const qualityRange = document.getElementById("quality");
+      const qualityValueSpan = document.getElementById("qualityValue");
+      const mergeModeCheckbox = document.getElementById("mergeMode");
+      const processBtn = document.getElementById("processBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const outputFilesDiv = document.getElementById("outputFiles");
+      const mergeSection = document.getElementById("mergeSection");
+      const mergeSortable = document.getElementById("mergeSortable");
+      const mergeBtn = document.getElementById("mergeBtn");
 
       let selectedFiles = []; // Stores actual File objects
       let processedFileBlobs = new Map(); // Stores { fileName: { originalFile: File, optimizedBlob: Blob } }
@@ -451,407 +451,452 @@
       // A full-fledged "continue session" would involve IndexedDB to store the PDF Blobs themselves.
       // Here, "sticky" means the *display* of files and their processed status is preserved.
 
-      const LS_KEY = 'docuShrinkSession';
+      const LS_KEY = "docuShrinkSession";
 
       function saveSession() {
-          const sessionData = selectedFiles.map(file => ({
-              name: file.name,
-              size: file.size,
-              type: file.type,
-              lastModified: file.lastModified,
-              processed: processedFileBlobs.has(file.name) // Mark if processed
-          }));
-          localStorage.setItem(LS_KEY, JSON.stringify(sessionData));
+        const sessionData = selectedFiles.map((file) => ({
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          lastModified: file.lastModified,
+          processed: processedFileBlobs.has(file.name), // Mark if processed
+        }));
+        localStorage.setItem(LS_KEY, JSON.stringify(sessionData));
       }
 
       function loadSession() {
-          const savedData = JSON.parse(localStorage.getItem(LS_KEY));
-          if (savedData) {
-              // For security and practicality, we don't restore actual files from localStorage.
-              // We just display the names, letting users know what they had.
-              // For true "resume work", one would need IndexedDB to store the actual PDF binary data.
-              // For this project, we'll indicate "processed" status.
-              selectedFiles = savedData.map(data => {
-                  const mockFile = new File([], data.name, { type: data.type, lastModified: data.lastModified });
-                  mockFile.size = data.size; // Manually set size
-                  return mockFile;
-              });
-              renderFileList();
-              // If a file was processed, display a placeholder for its output,
-              // but re-processing would be required to get the actual downloadable blob.
-              // This is a simplification due to browser security models.
-              // For a truly "sticky" experience with files, IndexedDB would be the way.
-          }
+        const savedData = JSON.parse(localStorage.getItem(LS_KEY));
+        if (savedData) {
+          // For security and practicality, we don't restore actual files from localStorage.
+          // We just display the names, letting users know what they had.
+          // For true "resume work", one would need IndexedDB to store the actual PDF binary data.
+          // For this project, we'll indicate "processed" status.
+          selectedFiles = savedData.map((data) => {
+            const mockFile = new File([], data.name, {
+              type: data.type,
+              lastModified: data.lastModified,
+            });
+            mockFile.size = data.size; // Manually set size
+            return mockFile;
+          });
+          renderFileList();
+          // If a file was processed, display a placeholder for its output,
+          // but re-processing would be required to get the actual downloadable blob.
+          // This is a simplification due to browser security models.
+          // For a truly "sticky" experience with files, IndexedDB would be the way.
+        }
 
-          // Load quality setting
-          const savedQuality = localStorage.getItem('docuShrinkQuality');
-          if (savedQuality) {
-              qualityRange.value = savedQuality;
-              qualityValueSpan.textContent = savedQuality;
-          }
+        // Load quality setting
+        const savedQuality = localStorage.getItem("docuShrinkQuality");
+        if (savedQuality) {
+          qualityRange.value = savedQuality;
+          qualityValueSpan.textContent = savedQuality;
+        }
       }
 
-      qualityRange.addEventListener('input', () => {
-          qualityValueSpan.textContent = qualityRange.value;
-          localStorage.setItem('docuShrinkQuality', qualityRange.value); // Save quality setting
+      qualityRange.addEventListener("input", () => {
+        qualityValueSpan.textContent = qualityRange.value;
+        localStorage.setItem("docuShrinkQuality", qualityRange.value); // Save quality setting
       });
 
       // --- PDF Processing (Compression & Merging) Logic ---
 
       async function compressPdf(file, quality) {
-          const arrayBuffer = await file.arrayBuffer();
-          const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer, { ignoreEncryption: true }); // ignoreEncryption for basic cases
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer, {
+          ignoreEncryption: true,
+        });
 
-          // Apply compression based on quality (simple strategy: remove unnecessary objects, linearize)
-          // PDF-LIB's `save` method handles compression. Lower quality means more aggressive compression.
-          const compressedPdfBytes = await pdfDoc.save({
-              use="google.com" : "application/pdf"
-          });
+        // Apply compression based on quality (simple strategy: remove unnecessary objects, linearize)
+        // PDF-LIB's `save` method handles compression. Lower quality means more aggressive compression.
+        const compressedPdfBytes = await pdfDoc.save(); // FIXED: Removed invalid option
 
-          return new Blob([compressedPdfBytes], { type: 'application/pdf' });
+        return new Blob([compressedPdfBytes], { type: "application/pdf" });
       }
 
       async function mergePdfs(pdfFiles) {
-          const mergedPdf = await PDFLib.PDFDocument.create();
-          for (const file of pdfFiles) {
-              const arrayBuffer = await file.arrayBuffer();
-              const pdf = await PDFLib.PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-              const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-              copiedPages.forEach((page) => mergedPdf.addPage(page));
-          }
-          const mergedPdfBytes = await mergedPdf.save();
-          return new Blob([mergedPdfBytes], { type: 'application/pdf' });
+        const mergedPdf = await PDFLib.PDFDocument.create();
+        for (const file of pdfFiles) {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await PDFLib.PDFDocument.load(arrayBuffer, {
+            ignoreEncryption: true,
+          });
+          const copiedPages = await mergedPdf.copyPages(
+            pdf,
+            pdf.getPageIndices()
+          );
+          copiedPages.forEach((page) => mergedPdf.addPage(page));
+        }
+        const mergedPdfBytes = await mergedPdf.save();
+        return new Blob([mergedPdfBytes], { type: "application/pdf" });
       }
 
       // --- UI Updates & Event Handlers ---
 
       function handleFiles(files) {
-          Array.from(files).forEach(file => {
-              if (file.type === 'application/pdf') {
-                  selectedFiles.push(file);
-              } else {
-                  alert(`${file.name} is not a PDF file. Please add PDF files only.`);
-              }
-          });
-          renderFileList();
-          saveSession();
+        Array.from(files).forEach((file) => {
+          if (file.type === "application/pdf") {
+            selectedFiles.push(file);
+          } else {
+            alert(`${file.name} is not a PDF file. Please add PDF files only.`);
+          }
+        });
+        renderFileList();
+        saveSession();
       }
 
-      dropZone.addEventListener('dragover', (e) => {
-          e.preventDefault();
-          dropZone.classList.add('hover');
+      dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.classList.add("hover");
       });
 
-      dropZone.addEventListener('dragleave', () => {
-          dropZone.classList.remove('hover');
+      dropZone.addEventListener("dragleave", () => {
+        dropZone.classList.remove("hover");
       });
 
-      dropZone.addEventListener('drop', (e) => {
-          e.preventDefault();
-          dropZone.classList.remove('hover');
-          handleFiles(e.dataTransfer.files);
+      dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("hover");
+        handleFiles(e.dataTransfer.files);
       });
 
-      dropZone.addEventListener('click', () => {
-          pdfInput.click();
+      dropZone.addEventListener("click", () => {
+        pdfInput.click();
       });
 
-      pdfInput.addEventListener('change', (e) => {
-          handleFiles(e.target.files);
-          e.target.value = '';
+      pdfInput.addEventListener("change", (e) => {
+        handleFiles(e.target.files);
+        e.target.value = "";
       });
 
       function renderFileList() {
-          fileListDiv.innerHTML = '';
-          outputFilesDiv.innerHTML = '<p style="color:#888;">Processed PDFs will appear here.</p>';
-          mergeSortable.innerHTML = ''; // Clear merge sortable list
+        fileListDiv.innerHTML = "";
+        outputFilesDiv.innerHTML =
+          '<p style="color:#888;">Processed PDFs will appear here.</p>';
+        mergeSortable.innerHTML = ""; // Clear merge sortable list
 
-          if (selectedFiles.length === 0) {
-              fileListDiv.innerHTML = `<p style="text-align: center; color: #888;">No PDFs selected yet.</p>`;
-              mergeSection.style.display = 'none';
-              return;
+        if (selectedFiles.length === 0) {
+          fileListDiv.innerHTML = `<p style="text-align: center; color: #888;">No PDFs selected yet.</p>`;
+          mergeSection.style.display = "none";
+          return;
+        }
+
+        selectedFiles.forEach((file, index) => {
+          const fileItem = document.createElement("div");
+          fileItem.className = "file-item";
+          fileItem.dataset.index = index; // Store original index for removal
+          fileItem.dataset.filename = file.name;
+
+          const processedStatus = processedFileBlobs.has(file.name)
+            ? " (Processed)"
+            : "";
+          const processedBlobInfo = processedFileBlobs.get(file.name);
+          const optimizedSizeInfo = processedBlobInfo
+            ? `<br>Optimized: <strong>${(
+                processedBlobInfo.optimizedBlob.size / 1024
+              ).toFixed(2)} KB</strong>`
+            : "";
+          const downloadButton = processedBlobInfo
+            ? `<button class="download-file-btn" data-filename="${file.name}">Download</button>`
+            : "";
+
+          fileItem.innerHTML = `
+                    <div class="file-info">
+                        <span class="name">${file.name}</span>
+                        <span class="size">Original: ${(
+                          file.size / 1024
+                        ).toFixed(2)} KB ${optimizedSizeInfo}</span>
+                        <span class="status">${processedStatus}</span>
+                    </div>
+                    <div class="file-actions">
+                        ${downloadButton}
+                        <button data-filename="${
+                          file.name
+                        }" class="remove-file-btn">Remove</button>
+                    </div>
+                `;
+          fileListDiv.appendChild(fileItem);
+
+          // Add to merge sortable if merge mode is on
+          if (mergeModeCheckbox.checked) {
+            const mergeItem = document.createElement("div");
+            mergeItem.className = "merge-item";
+            mergeItem.draggable = true;
+            mergeItem.dataset.filename = file.name;
+            mergeItem.innerHTML = `<span class="handle">☰</span> ${file.name}`;
+            mergeSortable.appendChild(mergeItem);
           }
+        });
 
-          selectedFiles.forEach((file, index) => {
-              const fileItem = document.createElement('div');
-              fileItem.className = 'file-item';
-              fileItem.dataset.index = index; // Store original index for removal
-              fileItem.dataset.filename = file.name;
+        document.querySelectorAll(".remove-file-btn").forEach((button) => {
+          button.addEventListener("click", (e) => {
+            const filenameToRemove = e.target.dataset.filename;
+            selectedFiles = selectedFiles.filter(
+              (file) => file.name !== filenameToRemove
+            );
+            processedFileBlobs.delete(filenameToRemove); // Also remove from processed cache
+            renderFileList();
+            saveSession();
+          });
+        });
 
-              const processedStatus = processedFileBlobs.has(file.name) ? ' (Processed)' : '';
-              const processedBlobInfo = processedFileBlobs.get(file.name);
-              const optimizedSizeInfo = processedBlobInfo ? `<br>Optimized: <strong>${(processedBlobInfo.optimizedBlob.size / 1024).toFixed(2)} KB</strong>` : '';
-              const downloadButton = processedBlobInfo ? `<button class="download-file-btn" data-filename="${file.name}">Download</button>` : '';
+        document.querySelectorAll(".download-file-btn").forEach((button) => {
+          button.addEventListener("click", (e) => {
+            const filename = e.target.dataset.filename;
+            const blobInfo = processedFileBlobs.get(filename);
+            if (blobInfo && blobInfo.optimizedBlob) {
+              const url = URL.createObjectURL(blobInfo.optimizedBlob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = blobInfo.optimizedFilename;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url); // Clean up
+            } else {
+              alert("File not yet processed or not found for download.");
+            }
+          });
+        });
 
-              fileItem.innerHTML = `
-                  <div class="file-info">
-                      <span class="name">${file.name}</span>
-                      <span class="size">Original: ${(file.size / 1024).toFixed(2)} KB ${optimizedSizeInfo}</span>
-                      <span class="status">${processedStatus}</span>
-                  </div>
-                  <div class="file-actions">
-                      ${downloadButton}
-                      <button data-filename="${file.name}" class="remove-file-btn">Remove</button>
-                  </div>
-              `;
-              fileListDiv.appendChild(fileItem);
+        // Drag and drop for merging
+        const mergeItems = mergeSortable.querySelectorAll(".merge-item");
+        mergeItems.forEach((item) => {
+          item.addEventListener("dragstart", (e) => {
+            currentDragItem = item;
+            e.dataTransfer.effectAllowed = "move";
+            item.classList.add("dragging");
+          });
+          item.addEventListener("dragenter", (e) => {
+            e.preventDefault();
+            if (item !== currentDragItem) {
+              item.style.borderTop = "2px solid var(--primary-color)";
+            }
+          });
+          item.addEventListener("dragleave", () => {
+            item.style.borderTop = "";
+          });
+          item.addEventListener("dragover", (e) => {
+            e.preventDefault();
+          });
+          item.addEventListener("drop", (e) => {
+            e.preventDefault();
+            if (item !== currentDragItem) {
+              const currentRect = currentDragItem.getBoundingClientRect();
+              const targetRect = item.getBoundingClientRect();
+              const position =
+                e.clientY - targetRect.top > targetRect.height / 2
+                  ? "after"
+                  : "before";
 
-              // Add to merge sortable if merge mode is on
-              if (mergeModeCheckbox.checked) {
-                  const mergeItem = document.createElement('div');
-                  mergeItem.className = 'merge-item';
-                  mergeItem.draggable = true;
-                  mergeItem.dataset.filename = file.name;
-                  mergeItem.innerHTML = `<span class="handle">☰</span> ${file.name}`;
-                  mergeSortable.appendChild(mergeItem);
+              if (position === "after") {
+                mergeSortable.insertBefore(currentDragItem, item.nextSibling);
+              } else {
+                mergeSortable.insertBefore(currentDragItem, item);
               }
+            }
+            item.style.borderTop = "";
           });
-
-          document.querySelectorAll('.remove-file-btn').forEach(button => {
-              button.addEventListener('click', (e) => {
-                  const filenameToRemove = e.target.dataset.filename;
-                  selectedFiles = selectedFiles.filter(file => file.name !== filenameToRemove);
-                  processedFileBlobs.delete(filenameToRemove); // Also remove from processed cache
-                  renderFileList();
-                  saveSession();
-              });
+          item.addEventListener("dragend", () => {
+            currentDragItem.classList.remove("dragging");
+            currentDragItem = null;
+            mergeItems.forEach((i) => (i.style.borderTop = "")); // Clear all borders
           });
-
-          document.querySelectorAll('.download-file-btn').forEach(button => {
-              button.addEventListener('click', (e) => {
-                  const filename = e.target.dataset.filename;
-                  const blobInfo = processedFileBlobs.get(filename);
-                  if (blobInfo && blobInfo.optimizedBlob) {
-                      const url = URL.createObjectURL(blobInfo.optimizedBlob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = blobInfo.optimizedFilename;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url); // Clean up
-                  } else {
-                      alert('File not yet processed or not found for download.');
-                  }
-              });
-          });
-
-
-          // Drag and drop for merging
-          const mergeItems = mergeSortable.querySelectorAll('.merge-item');
-          mergeItems.forEach(item => {
-              item.addEventListener('dragstart', (e) => {
-                  currentDragItem = item;
-                  e.dataTransfer.effectAllowed = 'move';
-                  item.classList.add('dragging');
-              });
-              item.addEventListener('dragenter', (e) => {
-                  e.preventDefault();
-                  if (item !== currentDragItem) {
-                      item.style.borderTop = '2px solid var(--primary-color)';
-                  }
-              });
-              item.addEventListener('dragleave', () => {
-                  item.style.borderTop = '';
-              });
-              item.addEventListener('dragover', (e) => {
-                  e.preventDefault();
-              });
-              item.addEventListener('drop', (e) => {
-                  e.preventDefault();
-                  if (item !== currentDragItem) {
-                      const currentRect = currentDragItem.getBoundingClientRect();
-                      const targetRect = item.getBoundingClientRect();
-                      const position = e.clientY - targetRect.top > targetRect.height / 2 ? 'after' : 'before';
-
-                      if (position === 'after') {
-                          mergeSortable.insertBefore(currentDragItem, item.nextSibling);
-                      } else {
-                          mergeSortable.insertBefore(currentDragItem, item);
-                      }
-                  }
-                  item.style.borderTop = '';
-              });
-              item.addEventListener('dragend', () => {
-                  currentDragItem.classList.remove('dragging');
-                  currentDragItem = null;
-                  mergeItems.forEach(i => i.style.borderTop = ''); // Clear all borders
-              });
-          });
+        });
       }
 
-
       // Toggle merge section visibility
-      mergeModeCheckbox.addEventListener('change', () => {
-          if (mergeModeCheckbox.checked) {
-              mergeSection.style.display = 'block';
-          } else {
-              mergeSection.style.display = 'none';
-          }
-          renderFileList(); // Re-render to show/hide merge items
+      mergeModeCheckbox.addEventListener("change", () => {
+        if (mergeModeCheckbox.checked) {
+          mergeSection.style.display = "block";
+        } else {
+          mergeSection.style.display = "none";
+        }
+        renderFileList(); // Re-render to show/hide merge items
       });
 
-
       // Process PDFs
-      processBtn.addEventListener('click', async () => {
-          if (selectedFiles.length === 0) {
-              alert('Please add PDF files first.');
-              return;
+      processBtn.addEventListener("click", async () => {
+        if (selectedFiles.length === 0) {
+          alert("Please add PDF files first.");
+          return;
+        }
+
+        outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Processing PDFs. Please wait...</p>`;
+        processedFileBlobs.clear(); // Clear previous processed results
+
+        const quality = parseFloat(qualityRange.value);
+
+        try {
+          for (const file of selectedFiles) {
+            const optimizedBlob = await compressPdf(file, quality);
+            const optimizedFilename = `${file.name.replace(
+              ".pdf",
+              "_optimized.pdf"
+            )}`;
+            processedFileBlobs.set(file.name, {
+              originalFile: file,
+              optimizedBlob: optimizedBlob,
+              optimizedFilename: optimizedFilename,
+            });
           }
-
-          outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Processing PDFs. Please wait...</p>`;
-          processedFileBlobs.clear(); // Clear previous processed results
-
-          const quality = parseFloat(qualityRange.value);
-
-          try {
-              for (const file of selectedFiles) {
-                  const optimizedBlob = await compressPdf(file, quality);
-                  const optimizedFilename = `${file.name.replace('.pdf', '_optimized.pdf')}`;
-                  processedFileBlobs.set(file.name, {
-                      originalFile: file,
-                      optimizedBlob: optimizedBlob,
-                      optimizedFilename: optimizedFilename
-                  });
-              }
-              renderProcessedFiles();
-              alert('All PDFs successfully processed!');
-              saveSession(); // Save session after processing
-          } catch (error) {
-              outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error processing PDFs: ${error.message}. Please try again or check file integrity.</p>`;
-              console.error('PDF processing error:', error);
-          }
+          renderProcessedFiles();
+          alert("All PDFs successfully processed!");
+          saveSession(); // Save session after processing
+        } catch (error) {
+          outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error processing PDFs: ${error.message}. Please try again or check file integrity.</p>`;
+          console.error("PDF processing error:", error);
+        }
       });
 
       // Merge PDFs
-      mergeBtn.addEventListener('click', async () => {
-          const filesToMerge = Array.from(mergeSortable.children).map(item => {
-              const filename = item.dataset.filename;
-              return selectedFiles.find(file => file.name === filename);
-          }).filter(Boolean); // Filter out null/undefined if any
+      mergeBtn.addEventListener("click", async () => {
+        const filesToMerge = Array.from(mergeSortable.children)
+          .map((item) => {
+            const filename = item.dataset.filename;
+            return selectedFiles.find((file) => file.name === filename);
+          })
+          .filter(Boolean); // Filter out null/undefined if any
 
-          if (filesToMerge.length < 2) {
-              alert('Please add at least two PDFs and arrange them in the "Arrange for Merging" section.');
-              return;
-          }
+        if (filesToMerge.length < 2) {
+          alert(
+            'Please add at least two PDFs and arrange them in the "Arrange for Merging" section.'
+          );
+          return;
+        }
 
-          outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Merging PDFs. Please wait...</p>`;
+        outputFilesDiv.innerHTML = `<p style="text-align: center; color: #888;">Merging PDFs. Please wait...</p>`;
 
-          try {
-              const mergedBlob = await mergePdfs(filesToMerge);
-              const mergedFilename = `merged_document_${Date.now()}.pdf`;
+        try {
+          const mergedBlob = await mergePdfs(filesToMerge);
+          const mergedFilename = `merged_document_${Date.now()}.pdf`;
 
-              const outputItem = document.createElement('div');
-              outputItem.className = 'file-item merged-output'; // Special class for merged output
-              outputItem.innerHTML = `
-                  <div class="file-info">
-                      <span class="name">Combined PDF: ${mergedFilename}</span>
-                      <span class="size">Size: <strong>${(mergedBlob.size / 1024).toFixed(2)} KB</strong></span>
-                  </div>
-                  <div class="file-actions">
-                      <button class="download-file-btn" data-filename="${mergedFilename}" data-is-merged="true">Download Combined PDF</button>
-                  </div>
-              `;
-              outputFilesDiv.innerHTML = ''; // Clear previous message
-              outputFilesDiv.appendChild(outputItem);
+          const outputItem = document.createElement("div");
+          outputItem.className = "file-item merged-output"; // Special class for merged output
+          outputItem.innerHTML = `
+                    <div class="file-info">
+                        <span class="name">Combined PDF: ${mergedFilename}</span>
+                        <span class="size">Size: <strong>${(
+                          mergedBlob.size / 1024
+                        ).toFixed(2)} KB</strong></span>
+                    </div>
+                    <div class="file-actions">
+                        <button class="download-file-btn" data-filename="${mergedFilename}" data-is-merged="true">Download Combined PDF</button>
+                    </div>
+                `;
+          outputFilesDiv.innerHTML = ""; // Clear previous message
+          outputFilesDiv.appendChild(outputItem);
 
-              // Store merged blob in processedFileBlobs with a unique key
-              processedFileBlobs.set(mergedFilename, {
-                  optimizedBlob: mergedBlob,
-                  optimizedFilename: mergedFilename
-              });
+          // Store merged blob in processedFileBlobs with a unique key
+          processedFileBlobs.set(mergedFilename, {
+            optimizedBlob: mergedBlob,
+            optimizedFilename: mergedFilename,
+          });
 
-              // Attach download event listener for the new merged file
-              document.querySelector('.download-file-btn[data-is-merged="true"]').addEventListener('click', (e) => {
-                  const filename = e.target.dataset.filename;
-                  const blobInfo = processedFileBlobs.get(filename);
-                  if (blobInfo && blobInfo.optimizedBlob) {
-                      const url = URL.createObjectURL(blobInfo.optimizedBlob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = blobInfo.optimizedFilename;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                  }
-              });
+          // Attach download event listener for the new merged file
+          document
+            .querySelector('.download-file-btn[data-is-merged="true"]')
+            .addEventListener("click", (e) => {
+              const filename = e.target.dataset.filename;
+              const blobInfo = processedFileBlobs.get(filename);
+              if (blobInfo && blobInfo.optimizedBlob) {
+                const url = URL.createObjectURL(blobInfo.optimizedBlob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = blobInfo.optimizedFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }
+            });
 
-              alert('PDFs successfully merged!');
-              saveSession();
-          } catch (error) {
-              outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error merging PDFs: ${error.message}.</p>`;
-              console.error('PDF merging error:', error);
-          }
+          alert("PDFs successfully merged!");
+          saveSession();
+        } catch (error) {
+          outputFilesDiv.innerHTML = `<p style="color: var(--danger-color); text-align: center;">Error merging PDFs: ${error.message}.</p>`;
+          console.error("PDF merging error:", error);
+        }
       });
-
 
       function renderProcessedFiles() {
-          outputFilesDiv.innerHTML = ''; // Clear previous outputs
-          if (processedFileBlobs.size === 0) {
-              outputFilesDiv.innerHTML = `<p style="color:#888;">Processed PDFs will appear here.</p>`;
-              return;
+        outputFilesDiv.innerHTML = ""; // Clear previous outputs
+        if (processedFileBlobs.size === 0) {
+          outputFilesDiv.innerHTML = `<p style="color:#888;">Processed PDFs will appear here.</p>`;
+          return;
+        }
+
+        processedFileBlobs.forEach((blobInfo, originalFileName) => {
+          // Only show individually processed files, merged output has its own display
+          if (blobInfo.originalFile) {
+            // Check if it's an individually processed file
+            const outputItem = document.createElement("div");
+            outputItem.className = "file-item";
+            const optimizedBlobUrl = URL.createObjectURL(
+              blobInfo.optimizedBlob
+            );
+
+            outputItem.innerHTML = `
+                        <div class="file-info">
+                            <span class="name">${
+                              blobInfo.optimizedFilename
+                            }</span>
+                            <span class="size">
+                                Original: ${(
+                                  blobInfo.originalFile.size / 1024
+                                ).toFixed(2)} KB <br>
+                                Optimized: <strong>${(
+                                  blobInfo.optimizedBlob.size / 1024
+                                ).toFixed(2)} KB</strong>
+                                (${(
+                                  100 -
+                                  (blobInfo.optimizedBlob.size /
+                                    blobInfo.originalFile.size) *
+                                    100
+                                ).toFixed(1)}% reduction)
+                            </span>
+                        </div>
+                        <div class="file-actions">
+                            <button class="download-file-btn" data-filename="${originalFileName}">Download</button>
+                        </div>
+                    `;
+            outputFilesDiv.appendChild(outputItem);
           }
+        });
 
-          processedFileBlobs.forEach((blobInfo, originalFileName) => {
-              // Only show individually processed files, merged output has its own display
-              if (blobInfo.originalFile) { // Check if it's an individually processed file
-                  const outputItem = document.createElement('div');
-                  outputItem.className = 'file-item';
-                  const optimizedBlobUrl = URL.createObjectURL(blobInfo.optimizedBlob);
-
-                  outputItem.innerHTML = `
-                      <div class="file-info">
-                          <span class="name">${blobInfo.optimizedFilename}</span>
-                          <span class="size">
-                              Original: ${(blobInfo.originalFile.size / 1024).toFixed(2)} KB <br>
-                              Optimized: <strong>${(blobInfo.optimizedBlob.size / 1024).toFixed(2)} KB</strong>
-                              (${(100 - (blobInfo.optimizedBlob.size / blobInfo.originalFile.size) * 100).toFixed(1)}% reduction)
-                          </span>
-                      </div>
-                      <div class="file-actions">
-                          <button class="download-file-btn" data-filename="${originalFileName}">Download</button>
-                      </div>
-                  `;
-                  outputFilesDiv.appendChild(outputItem);
-              }
+        // Re-attach download event listeners for all newly rendered buttons
+        document.querySelectorAll(".download-file-btn").forEach((button) => {
+          button.addEventListener("click", (e) => {
+            const filename = e.target.dataset.filename;
+            const blobInfo = processedFileBlobs.get(filename);
+            if (blobInfo && blobInfo.optimizedBlob) {
+              const url = URL.createObjectURL(blobInfo.optimizedBlob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = blobInfo.optimizedFilename;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            }
           });
-
-          // Re-attach download event listeners for all newly rendered buttons
-          document.querySelectorAll('.download-file-btn').forEach(button => {
-              button.addEventListener('click', (e) => {
-                  const filename = e.target.dataset.filename;
-                  const blobInfo = processedFileBlobs.get(filename);
-                  if (blobInfo && blobInfo.optimizedBlob) {
-                      const url = URL.createObjectURL(blobInfo.optimizedBlob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = blobInfo.optimizedFilename;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                  }
-              });
-          });
+        });
       }
 
-
       // Clear All
-      clearBtn.addEventListener('click', () => {
-          selectedFiles = [];
-          processedFileBlobs.clear();
-          renderFileList();
-          outputFilesDiv.innerHTML = `<p style="color:#888;">Processed PDFs will appear here.</p>`;
-          alert('All PDFs and results cleared.');
-          localStorage.removeItem(LS_KEY); // Clear session from local storage
+      clearBtn.addEventListener("click", () => {
+        selectedFiles = [];
+        processedFileBlobs.clear();
+        renderFileList();
+        outputFilesDiv.innerHTML = `<p style="color:#888;">Processed PDFs will appear here.</p>`;
+        alert("All PDFs and results cleared.");
+        localStorage.removeItem(LS_KEY); // Clear session from local storage
       });
 
-
       // Initial load
-      window.addEventListener('load', () => {
-          loadSession(); // Load saved files and settings
-          renderFileList(); // Display them
+      window.addEventListener("load", () => {
+        loadSession(); // Load saved files and settings
+        renderFileList(); // Display them
       });
     </script>
   </body>
