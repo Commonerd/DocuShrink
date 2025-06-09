@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://docushrink.netlify.app/sitemap.xml
